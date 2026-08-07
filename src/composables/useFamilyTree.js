@@ -8,7 +8,7 @@ export function useFamilyTree() {
   const rawData = ref([]);
 
   const sheetId = import.meta.env.VITE_GOOGLE_SHEETS_ID || '';
-  const sheetName = import.meta.env.VITE_GOOGLE_SHEET_NAME || 'Feuille1';
+  const sheetName = import.meta.env.VITE_GOOGLE_SHEETS_NAME;
 
   const loadData = async (customSheetId = null) => {
     isLoading.value = true;
