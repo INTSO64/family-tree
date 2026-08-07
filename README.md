@@ -1,5 +1,15 @@
 # family-tree
 
+## Configuration des colonnes
+
+Copiez `.env.example` vers `.env`, puis renseignez l'ID de la feuille Google et les noms d'en-tête réellement utilisés. Les valeurs proposées correspondent au format suivant :
+
+```text
+id,nom,prénoms,père,mère,époux(se),notes,photo
+```
+
+Les valeurs des colonnes `père`, `mère` et `époux(se)` doivent être les `id` d'autres lignes. Après toute modification du fichier `.env`, redémarrez le serveur Vite.
+
 This template should help get you started developing with Vue 3 in Vite.
 
 ## Recommended IDE Setup

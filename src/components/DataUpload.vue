@@ -98,7 +98,7 @@
 
 <script setup>
 import { ref, computed, toRefs } from 'vue';
-import { loadCSVFromGoogleSheets, transformToFamilyTreeData } from '../utils/csvParser';
+import { familyColumns, loadCSVFromGoogleSheets, transformToFamilyTreeData } from '../utils/csvParser';
 import Papa from 'papaparse';
 
 const emit = defineEmits(['dataLoaded', 'error']);
@@ -220,7 +220,7 @@ const processFile = (file) => {
         header: true,
         skipEmptyLines: true,
         trimHeaders: true,
-        transformHeader: (header) => header.trim().toLowerCase(),
+        transformHeader: (header) => header.trim().toLocaleLowerCase('fr-FR'),
         complete: (results) => {
           if (results.errors.length > 0) {
             setStatus(`❌ Erreur de parsing : ${results.errors[0].message}`, 'error');
@@ -257,7 +257,7 @@ const processData = (data) => {
 
   // Vérifier les colonnes nécessaires
   const firstRow = data[0];
-  const requiredFields = ['id', 'name'];
+  const requiredFields = [familyColumns.id];
   const missingFields = requiredFields.filter(field => !(field in firstRow));
   
   if (missingFields.length > 0) {
