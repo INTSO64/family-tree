@@ -1,8 +1,24 @@
 import Papa from 'papaparse';
 import axios from 'axios';
 
+const normalizeHeader = (header) => String(header || '').trim().toLocaleLowerCase('fr-FR');
+
+const configuredHeader = (variableName, fallback) =>
+  normalizeHeader(import.meta.env[variableName] || fallback);
+
+export const familyColumns = {
+  id: configuredHeader('VITE_COLUMN_ID', 'Id'),
+  lastName: configuredHeader('VITE_COLUMN_LAST_NAME', 'Nom'),
+  firstNames: configuredHeader('VITE_COLUMN_FIRST_NAMES', 'Prénoms'),
+  father: configuredHeader('VITE_COLUMN_FATHER', 'Père'),
+  mother: configuredHeader('VITE_COLUMN_MOTHER', 'Mère'),
+  spouse: configuredHeader('VITE_COLUMN_SPOUSE', 'Époux(se)'),
+  notes: configuredHeader('VITE_COLUMN_NOTES', 'Notes'),
+  photo: configuredHeader('VITE_COLUMN_PHOTO', 'Photo'),
+  gender: configuredHeader('VITE_COLUMN_GENDER', 'Genre')
+};
+
 export async function loadCSVFromGoogleSheets(sheetId, sheetName = 'Sheet1') {
-  // URL d'export CSV de Google Sheets
   const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&sheet=${sheetName}`;
 
   try {
@@ -11,15 +27,9 @@ export async function loadCSVFromGoogleSheets(sheetId, sheetName = 'Sheet1') {
       Papa.parse(response.data, {
         header: true,
         skipEmptyLines: true,
-        transformHeader: (header) => header.trim().toLowerCase(),
-        complete: (results) => {
-          if (results.errors.length > 0) {
-            reject(results.errors);
-          } else {
-            resolve(results.data);
-          }
-        },
-        error: (error) => reject(error)
+        transformHeader: normalizeHeader,
+        complete: (results) => results.errors.length > 0 ? reject(results.errors) : resolve(results.data),
+        error: reject
       });
     });
   } catch (error) {
@@ -34,75 +44,123 @@ const isBlank = (value) => {
   return !str || str.toLowerCase() === 'null';
 };
 
-const pick = (row, keys) => {
-  for (const key of keys) {
-    const value = row[key];
-    if (!isBlank(value)) {
-      return String(value).trim();
-    }
+const pick = (row, header) => {
+  const value = row[normalizeHeader(header)];
+  return isBlank(value) ? null : String(value).trim();
+};
+
+const exists = (id, members) => id !== null && Object.hasOwn(members, id);
+
+const normalizeGender = (gender) => {
+  const g = String(gender || '').trim().toLocaleLowerCase('fr-FR');
+  if (['m', 'masculin', 'male', 'homme', 'mâle'].includes(g)) return 'male';
+  if (['f', 'féminin', 'feminin', 'female', 'femme'].includes(g)) return 'female';
+  return 'unknown';
+};
+
+const lookupKey = (row, headers) => {
+  for (const header of headers) {
+    const value = pick(row, header);
+    if (value !== null) return value;
   }
   return null;
 };
 
-const normalizeGender = (value) => {
-  const gender = (value || '').toLowerCase();
-  if (gender === 'male' || gender === 'm' || gender === 'homme' || gender === 'masculin') return 'male';
-  if (gender === 'female' || gender === 'f' || gender === 'femme' || gender === 'féminin') return 'female';
-  return 'unknown';
-};
+const splitIds = (value) => String(value || '').split(',').map((v) => v.trim()).filter(Boolean);
 
 export function transformToFamilyTreeData(csvData) {
   const members = {};
-  const rootIds = [];
 
-  csvData.forEach(row => {
-    const id = pick(row, ['id', 'identifiant']);
+  csvData.forEach((row) => {
+    const id = pick(row, familyColumns.id);
     if (!id) return;
 
-    const parentId = pick(row, ['parentid', 'parent_id', 'parent']);
-    const name = pick(row, ['name', 'nom']);
-    const gender = normalizeGender(pick(row, ['gender', 'genre', 'sexe']));
-    const birthDate = pick(row, ['birthdate', 'date de naissance', 'date_naissance', 'birth']);
-    const deathDate = pick(row, ['deathdate', 'date de décès', 'date_deces', 'death']);
-    const bio = pick(row, ['bio', 'biographie', 'biography']);
+    const lastName = pick(row, familyColumns.lastName);
+    const firstNames = pick(row, familyColumns.firstNames);
+    const name = [firstNames, lastName].filter(Boolean).join(' ') || id;
 
-    const title = [birthDate, deathDate].filter(Boolean).join(' - ') || bio || '';
+    const fatherId = pick(row, familyColumns.father);
+    const motherId = pick(row, familyColumns.mother);
+    const spouseId = pick(row, familyColumns.spouse);
+    const parentId = lookupKey(row, ['parentid', 'parent_id', 'parent', 'parentId', 'id du parent']);
 
     members[id] = {
       id,
-      pid: parentId,
       name,
-      gender,
-      birthDate,
-      deathDate,
-      bio,
-      title,
-      children: [],
-      spouse: null
+      gender: normalizeGender(pick(row, familyColumns.gender)),
+      fatherId,
+      motherId,
+      spouseId,
+      parentId,
+      notes: pick(row, familyColumns.notes),
+      photo: pick(row, familyColumns.photo)
     };
   });
 
-  Object.values(members).forEach(member => {
-    if (member.pid && members[member.pid]) {
-      members[member.pid].children.push(member.id);
-    } else {
-      member.pid = null;
-      rootIds.push(member.id);
+  // Dériver le genre à partir des références Père/Mère quand il n'est pas fourni.
+  Object.values(members).forEach((member) => {
+    if (member.gender === 'unknown') {
+      if (exists(member.fatherId, members) && members[member.fatherId].gender === 'unknown') {
+        members[member.fatherId].gender = 'male';
+      }
+      if (exists(member.motherId, members) && members[member.motherId].gender === 'unknown') {
+        members[member.motherId].gender = 'female';
+      }
     }
   });
+
+  // Liens de couple : colonne Époux(se) + inférence via enfants partagés.
+  const partnerOf = {};
+  const ensurePartner = (a, b) => {
+    if (a === b || !exists(a, members) || !exists(b, members)) return;
+    (partnerOf[a] ??= new Set()).add(b);
+    (partnerOf[b] ??= new Set()).add(a);
+  };
+  Object.values(members).forEach((member) => {
+    splitIds(member.spouseId).forEach((spouse) => ensurePartner(member.id, spouse));
+    if (exists(member.fatherId, members) && exists(member.motherId, members)) {
+      ensurePartner(member.fatherId, member.motherId);
+    }
+  });
+
+  const rootIds = Object.values(members)
+    .filter((member) => !exists(member.fatherId, members)
+      && !exists(member.motherId, members)
+      && !(member.parentId && exists(member.parentId, members)))
+    .filter((member) => {
+      const partners = partnerOf[member.id] || new Set();
+      return partners.size === 0 || [...partners].every((p) => p > member.id);
+    })
+    .map((member) => member.id);
+
+  const toFamilyNode = (member) => {
+    const node = {
+      id: member.id,
+      name: member.name,
+      gender: member.gender,
+      title: member.notes || '',
+      img: member.photo || undefined
+    };
+
+    if (exists(member.fatherId, members)) node.fid = member.fatherId;
+    if (exists(member.motherId, members)) node.mid = member.motherId;
+
+    // Rétro-compatibilité schéma à parent unique (`parentId`).
+    if (!member.fatherId && !member.motherId && exists(member.parentId, members)) {
+      const parent = members[member.parentId];
+      if (parent.gender === 'female') node.mid = member.parentId;
+      else node.fid = member.parentId;
+    }
+
+    const partners = [...(partnerOf[member.id] || [])];
+    if (partners.length) node.pids = partners;
+
+    return node;
+  };
 
   return {
     members,
     rootIds,
-    getNodes: () => Object.values(members).map(m => ({
-      id: m.id,
-      pid: m.pid,
-      name: m.name,
-      gender: m.gender,
-      title: m.title,
-      birthDate: m.birthDate,
-      deathDate: m.deathDate,
-      bio: m.bio
-    }))
+    getNodes: () => Object.values(members).map(toFamilyNode)
   };
 }
