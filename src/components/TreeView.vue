@@ -78,9 +78,11 @@ const initTree = () => {
     familyTreeInstance = new FamilyTree(treeContainer.value, {
       nodes,
       template: 'tommy',
+      orientation: FamilyTree.orientation.top,
       nodeBinding: {
         field_0: 'name',
-        field_1: 'title'
+        field_1: 'title',
+        img_0: 'img'
       },
       scaleInitial: 0.8,
       scaleMin: 0.3,
