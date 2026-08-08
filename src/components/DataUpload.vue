@@ -3,7 +3,7 @@
     <!-- Mode automatique (Google Sheets) -->
     <div class="upload-section">
       <div class="input-group">
-        <label for="sheet-id">📊 ID du Google Sheet</label>
+        <label for="sheet-id">ID du Google Sheet</label>
         <input 
           id="sheet-id"
           v-model="sheetId" 
@@ -12,8 +12,8 @@
           @keyup.enter="loadFromGoogle"
         />
         <button @click="loadFromGoogle" :disabled="isLoading" class="btn-primary">
-          <span v-if="isLoading">⏳ Chargement...</span>
-          <span v-else>📥 Charger</span>
+          <span v-if="isLoading">Chargement...</span>
+          <span v-else>Charger</span>
         </button>
       </div>
 

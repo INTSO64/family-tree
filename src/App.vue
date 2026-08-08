@@ -2,10 +2,10 @@
   <div id="app">
     <header class="app-header no-print">
       <div class="header-content">
-        <h1>🌳 Arbre Généalogique</h1>
+        <h1>Tetiarana TRR</h1>
         <div class="header-actions">
           <button @click="showUpload = !showUpload" class="btn-toggle-upload">
-            {{ showUpload ? '✕ Fermer' : '📊 Importer des données' }}
+            {{ showUpload ? '✕ Fermer' : 'Importer des données' }}
           </button>
         </div>
       </div>
@@ -35,10 +35,6 @@
         />
       </div>
     </main>
-
-    <footer class="app-footer no-print">
-      <p>Arbre Généalogique - Propulsé par Vue.js & FamilyTree.js</p>
-    </footer>
   </div>
 </template>
 
