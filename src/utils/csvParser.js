@@ -4,7 +4,7 @@ import axios from 'axios';
 const normalizeHeader = (header) => String(header || '').trim().toLocaleLowerCase('fr-FR');
 
 const configuredHeader = (variableName, fallback) =>
-  normalizeHeader(import.meta.env[variableName] || fallback);
+  normalizeHeader(import.meta?.env?.[variableName] || fallback);
 
 export const familyColumns = {
   id: configuredHeader('VITE_COLUMN_ID', 'Id'),
@@ -68,6 +68,25 @@ const lookupKey = (row, headers) => {
 
 const splitIds = (value) => String(value || '').split(',').map((v) => v.trim()).filter(Boolean);
 
+export function formatImageUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null') return null;
+
+  // Transforme les liens de partage Google Drive en liens d'images directs
+  const driveMatch = trimmed.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*id=)([a-zA-Z0-9_-]+)/);
+  if (driveMatch && driveMatch[1]) {
+    return `https://lh3.googleusercontent.com/d/${driveMatch[1]}`;
+  }
+
+  // Transforme les liens Dropbox en liens d'accès direct au fichier brut
+  if (trimmed.includes('dropbox.com')) {
+    return trimmed.replace('dl=0', 'raw=1');
+  }
+
+  return trimmed;
+}
+
 export function transformToFamilyTreeData(csvData) {
   const members = {};
 
@@ -93,7 +112,7 @@ export function transformToFamilyTreeData(csvData) {
       spouseId,
       parentId,
       notes: pick(row, familyColumns.notes),
-      photo: pick(row, familyColumns.photo)
+      photo: formatImageUrl(pick(row, familyColumns.photo))
     };
   });
 
@@ -123,6 +142,86 @@ export function transformToFamilyTreeData(csvData) {
     }
   });
 
+  // Fusionner les couples dont l'un des conjoints n'a pas de photo en un seul nœud.
+  const hasPhoto = (member) => Boolean(member && member.photo && String(member.photo).trim() && String(member.photo).trim().toLowerCase() !== 'null');
+
+  const visitedPairs = new Set();
+  Object.keys(members).forEach((idA) => {
+    const partners = partnerOf[idA] ? [...partnerOf[idA]] : [];
+    partners.forEach((idB) => {
+      if (!exists(idA, members) || !exists(idB, members)) return;
+      const pairKey = [idA, idB].sort().join('|');
+      if (visitedPairs.has(pairKey)) return;
+      visitedPairs.add(pairKey);
+
+      const memberA = members[idA];
+      const memberB = members[idB];
+
+      const photoA = hasPhoto(memberA);
+      const photoB = hasPhoto(memberB);
+
+      // Si l'un des deux conjoints (ou les deux) n'a pas de photo, on les unit dans un seul nœud
+      if (!photoA || !photoB) {
+        let targetId = idA;
+        let sourceId = idB;
+
+        if (photoB && !photoA) {
+          targetId = idB;
+          sourceId = idA;
+        } else if (!photoA && !photoB) {
+          // Si aucun des deux n'a de photo, privilégier celui qui a des parents enregistrés
+          const aHasParents = exists(memberA.fatherId, members) || exists(memberA.motherId, members) || exists(memberA.parentId, members);
+          const bHasParents = exists(memberB.fatherId, members) || exists(memberB.motherId, members) || exists(memberB.parentId, members);
+          if (bHasParents && !aHasParents) {
+            targetId = idB;
+            sourceId = idA;
+          }
+        }
+
+        const target = members[targetId];
+        const source = members[sourceId];
+
+        // Nom combiné (ex: "Jean DUPONT & Marie MARTIN")
+        if (source.name && !target.name.includes(source.name)) {
+          target.name = `${target.name} & ${source.name}`;
+        }
+
+        // Photo combinée (garde la photo existante si disponible)
+        target.photo = target.photo || source.photo || null;
+
+        // Notes combinées
+        target.notes = [target.notes, source.notes].filter(Boolean).join(' / ');
+
+        // Rediriger toutes les références de `sourceId` vers `targetId`
+        Object.values(members).forEach((m) => {
+          if (m.fatherId === sourceId) m.fatherId = targetId;
+          if (m.motherId === sourceId) m.motherId = targetId;
+          if (m.spouseId === sourceId) m.spouseId = targetId;
+          if (m.parentId === sourceId) m.parentId = targetId;
+          if (m.spouseId === m.id) m.spouseId = null;
+        });
+
+        // Mettre à jour `partnerOf`
+        if (partnerOf[sourceId]) {
+          partnerOf[sourceId].forEach((otherPartner) => {
+            if (otherPartner !== targetId && partnerOf[otherPartner]) {
+              partnerOf[otherPartner].delete(sourceId);
+              partnerOf[otherPartner].add(targetId);
+              (partnerOf[targetId] ??= new Set()).add(otherPartner);
+            }
+          });
+          delete partnerOf[sourceId];
+        }
+        if (partnerOf[targetId]) {
+          partnerOf[targetId].delete(sourceId);
+        }
+
+        // Supprimer le membre source
+        delete members[sourceId];
+      }
+    });
+  });
+
   const rootIds = Object.values(members)
     .filter((member) => !exists(member.fatherId, members)
       && !exists(member.motherId, members)
@@ -143,7 +242,7 @@ export function transformToFamilyTreeData(csvData) {
     };
 
     if (exists(member.fatherId, members)) node.fid = member.fatherId;
-    if (exists(member.motherId, members)) node.mid = member.motherId;
+    if (exists(member.motherId, members) && member.motherId !== member.fatherId) node.mid = member.motherId;
 
     // Rétro-compatibilité schéma à parent unique (`parentId`).
     if (!member.fatherId && !member.motherId && exists(member.parentId, members)) {
